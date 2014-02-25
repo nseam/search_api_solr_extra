@@ -1,0 +1,135 @@
+div.search-api-solr-extra-debug .krumo-root {
+  background: none;
+  border: 0;
+  margin: 4px 0px;
+}
+
+div.search-api-solr-extra-debug .krumo-root > .krumo-first,
+div.search-api-solr-extra-debug .krumo-root > .krumo-first > li > div > ul {
+  margin: 0;
+  padding: 0;
+}
+
+div.search-api-solr-extra-debug .krumo-root > .krumo-first > li > div {
+  display: none;
+}
+
+div.search-api-solr-extra-debug .krumo-element {
+  background: none;
+  border: 0;
+}
+
+div.search-api-solr-extra-debug,
+div.search-api-solr-extra-debug .krumo-expand {
+    font: 12px/1.2 Helvetica,arial,freesans,clean,sans-serif !important;
+    -moz-box-sizing: border-box;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.9);
+    background: #fff;
+    border-radius: 3px;
+    border: 1px solid #d3d3d3;
+    box-shadow: 0px 1px 3px #ddd;
+    margin-bottom: 5px;
+    padding: 2px !important;
+}
+
+div.search-api-solr-extra-debug:active,
+div.search-api-solr-extra-debug:hover,
+div.search-api-solr-extra-debug .krumo-expand:active,
+div.search-api-solr-extra-debug .krumo-expand:hover {
+  background-color: #EAEAEA;
+  background-image: linear-gradient(#EAEAEA, #DADADA);
+  background-repeat: repeat-x;
+  border-color: #CCCCCC #CCCCCC #B5B5B5 !important;
+  text-decoration: none;
+}
+
+div.search-api-solr-extra-debug > div.search-api-solr-extra-debug-content,
+div.search-api-solr-extra-debug > div.search-api-solr-extra-debug-content pre {
+  font-family: Consolas,"Liberation Mono",Courier,monospace;
+  font-size: 11px;
+  padding: 3px;
+  color: #333;
+  line-height: 1.1em;
+  padding: 3px 8px;
+}
+
+
+div.search-api-solr-extra-debug-title {
+  cursor: pointer;
+  color: #333333;
+  cursor: pointer;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.9);
+  white-space: nowrap;
+  padding: 4px;
+}
+
+div.search-api-solr-extra-debug.expanded {
+  background: #f2e9b8; /* Old browsers */
+  /* IE9 SVG, needs conditional override of 'filter' to 'none' */
+  background: linear-gradient(to bottom, #fff8d3 0%,#f2e9b8 95%); /* W3C */
+}
+
+div.search-api-solr-extra-debug hr {
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  background: none;
+  height: 3px !important;
+  margin: 6px 0;
+}
+
+div.search-api-solr-extra-debug pre {
+  background: none !important;
+}
+
+div.search-api-solr-extra-debug .krumo-node {
+  background: none;
+  border: 0;
+}
+
+
+div.search-api-solr-extra-debug > div.search-api-solr-extra-debug-title,
+div.search-api-solr-extra-debug .krumo-expand > a {
+  background: url('../images/arrow-right.png') 2px center no-repeat;
+  padding-left: 20px;
+}
+div.search-api-solr-extra-debug.expanded > div.search-api-solr-extra-debug-title,
+div.search-api-solr-extra-debug .krumo-opened > a {
+  background: url('../images/arrow-down.png') 2px center no-repeat;
+}
+
+div.search-api-solr-extra-debug .krumo-footnote {
+  display: none;
+}
+
+div.search-api-solr-extra-debug-scroll {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+div.debug {
+  background: #ddd;
+  padding: 3px;
+  margin: 4px;
+    > div.debug-content, > div.debug-content pre {
+      padding: 3px;
+      border: 1px dotted #aaa;
+      font-family: Monaco, Consolas, "Lucida Console", monospace;
+      font-size: 11px;
+      color: #333;
+    }
+    > div.debug-title {
+      background: url('../images/sprites/arrow-right.png') 5px 3px no-repeat;
+    }
+}
+div.debug-title {
+  padding-top: 4px;
+  cursor: pointer;
+  color: #666;
+  font-size: 11px !important;
+  font-weight: normal !important;
+  padding-left: 24px;
+  margin-bottom: 6px;
+}
+div.debug.expanded > div.debug-title {
+  background: url('../images/sprites/arrow-down.png') 5px 3px no-repeat;
+}
+div.debug.expanded { background: #ff8; }

@@ -1,0 +1,614 @@
+<?php
+/**
+ * @file
+ * Solr Search Extra module.
+ * Additional functionality for Search API Solr module.
+ */
+
+define('SEARCH_API_SOLR_EXTRA_INTERVAL_DAILY', 86400);
+define('SEARCH_API_SOLR_EXTRA_INTERVAL_UNLIMITED', -1);
+
+/**
+ * Implements hook_menu().
+ */
+function search_api_solr_extra_menu() {
+  return array(
+    'admin/config/search/search_api/extra' => array(
+      'title' => 'SOLR Search Settings',
+      'description' => 'Advanced Settings',
+      'page callback' => 'drupal_get_form',
+      'page arguments' => array('search_api_solr_extra_settings_form'),
+      'access arguments' => array('administer search_api_solr_extra'),
+      'file' => 'search_api_solr_extra.admin.inc',
+      'type' => MENU_NORMAL_ITEM,
+    ),
+      'admin/config/search/search_api/extra/settings' => array(
+      'title' => 'Configuration',
+      'description' => 'Configuration',
+      'page callback' => 'drupal_get_form',
+      'page arguments' => array('search_api_solr_extra_settings_form'),
+      'access arguments' => array('administer search_api_solr_extra'),
+      'file' => 'search_api_solr_extra.admin.inc',
+      'type' => MENU_DEFAULT_LOCAL_TASK,
+      'weight' => 1,
+    ),
+    'admin/config/search/search_api/extra/boosts' => array(
+      'title' => 'Boost Settings',
+      'description' => 'Configuration of boosts for fields',
+      'page callback' => 'drupal_get_form',
+      'page arguments' => array('search_api_solr_extra_boosts_settings_form'),
+      'access arguments' => array('administer search_api_solr_extra'),
+      'file' => 'search_api_solr_extra.admin.inc',
+      'type' => MENU_LOCAL_TASK,
+      'weight' => 2,
+    ),
+  );
+}
+
+/**
+ * Implements hook_search_api_ranges_minmax_alter().
+ *
+ * Note: This hook_alter is available after applying patch at: http://drupal.org/node/1765066
+ */
+function search_api_solr_extra_search_api_ranges_minmax_alter(&$variables, &$order) {
+  if ($variables['range_field'] == 'field_job_salary_max' && $order == 'ASC') {
+    // We don't want search_api_ranges module to use field_job_salary_max field but field_job_salary_min instead.
+    $variables['range_field'] = 'field_job_salary_min';
+  }
+  elseif ($variables['range_field'] == 'field_job_salary_min' && $order == 'DESC') {
+    // We don't want search_api_ranges module to use field_job_salary_min field but field_job_salary_max instead.
+    $variables['range_field'] = 'field_job_salary_max';
+  }
+}
+
+/**
+ * Implements hook_search_api_solr_search_results_alter().
+ */
+function search_api_solr_extra_search_api_solr_search_results_alter(&$results, $query, $response) {
+
+  $options = $query->getOptions();
+
+  if (variable_get('search_api_solr_extra_solr_cache_results', TRUE)) {
+    // Solr caching enabled.
+    if (isset($options['query_hash'])) {
+      // We have query hash, we could check if there are already a cached version
+      // of the query result in the cache.
+
+      if (($cached = cache_get($options['query_hash'])) && !empty($cached->data) && $cached->expire > REQUEST_TIME)  {
+        // We already have cached version of the query result. Reusing it.
+        $results = $cached->data;
+      }
+      else {
+        // Cached version of the query result is empty. Resaving cache.
+        cache_set($options['query_hash'], $results, 'cache', REQUEST_TIME + search_api_solr_extra_get_solr_cache_results_timeout());
+      }
+    }
+  }
+
+  if (variable_get('search_api_solr_extra_settings_logging_responses_enabled', FALSE)
+      && user_access('administer mp')) {
+    // Logging Solr query result to the watchdog.
+    watchdog(
+      'Solr', t('Got response (@timems) for "@search_id"') . ': <br />' .
+      '<pre>' . print_r($query, TRUE) . '</pre>',
+      array(
+        '@time' => $response->debug->timing->time,
+        '@search_id' => $options['search id'],
+      ),
+      WATCHDOG_INFO
+    );
+  }
+
+  if (variable_get('search_api_solr_extra_settings_debugging_result_full_response_enabled', FALSE)
+      && user_access('administer mp')) {
+    drupal_set_message(
+      search_api_solr_extra_html_collapsible(
+        t('Solr result full response for "@search_id"', array(
+          '@search_id' => $options['search id'],
+        )),
+        '<pre>' . print_r($response, TRUE) . '</pre>'
+      )
+    );
+  }
+
+  if (variable_get('search_api_solr_extra_settings_debugging_result_spellcheck_enabled', FALSE)
+      && user_access('administer mp')) {
+    if(isset($response->spellcheck)) {
+      drupal_set_message(
+        search_api_solr_extra_html_collapsible(
+          t('Solr result spellcheck'),
+          '<pre>' . print_r($response->spellcheck, TRUE) . '</pre>'
+        )
+      );
+    }
+    elseif (@reset($query->getKeys()) !== '__REBUILD_SPELLCHECK_DATA__') {
+      // We'd like to display this message only for spell checker suggestion
+      // queries and not rebuild query.
+      drupal_set_message(
+        search_api_solr_extra_html_collapsible(
+          t('Solr result spellcheck (missing reponse)'),
+          t('No spellcheck data has been sent back from the Solr server.')
+        )
+      );
+    }
+  }
+
+  if (variable_get('search_api_solr_extra_settings_debugging_results_process_time', FALSE)
+      && user_access('administer mp')) {
+    // Displaying Solr result processing time.
+    drupal_set_message(
+      search_api_solr_extra_html_collapsible(
+        t('Solr result processing time for "@search_id"', array(
+          '@search_id' => $options['search id'],
+        )),
+        $response->debug->timing->time . 'ms',
+        TRUE
+      )
+    );
+  }
+
+  if (isset($response->debug->explain)) {
+    $explains = array_values((array)$response->debug->explain);
+  }
+  else {
+    $explains = array();
+  }
+
+  $num_records    = count($results['results']);
+
+  if (variable_get('search_api_solr_extra_settings_debugging_result_boosts_enabled',
+    FALSE) && !empty($explains) && user_access('administer mp')) {
+
+    $boosts_html = '';
+    $index = 0;
+    $max_boost = 0;
+
+    foreach ($results['results'] as $id => $record) {
+      $max_boost = max($max_boost, $results['results'][$id]['score']);
+    }
+
+    foreach ($results['results'] as $id => $record) {
+      $explain = $explains[$index];
+
+      // Removing unneeded parts.
+      $explain = preg_replace('/^(\s*\d+(\.[a-z_\:\-E\d]+)* = [^\(]{1,1}[^\r\n]*[\r\n]*|\s*\([^\n\r]+[\n\r]+|\)[^\n\r]*[\n\r]*)/m', '', $explain);
+
+      // More readable numbers.
+      $explain = preg_replace_callback(
+        '/(\d+\.[\dE\-]+)\s*=/',
+        create_function(
+            '$matches',
+            'return number_format((float)$matches[0], 4, ".", "") . " =";'
+        ),
+        $explain
+      );
+
+      $explain = htmlentities($explain);
+
+      // Bolding boosts.
+      $explain = preg_replace(
+        '/^(\s*)(\d+(\.[a-z_\:\-E\d]+)*)( = \({1,1}[^\r\n]*[\r\n]*)/m',
+        "\\1 <b>\\2</b> \\4",
+        $explain
+      );
+
+      $explain = str_replace('  ', '&nbsp;&nbsp;', $explain);
+
+      // Colorizing field names.
+      $explain = preg_replace(
+        '/(\()([a-z_\:]+)(.*?)(\s*in)/s',
+        "\\1<span style='font-weight:bold; color:#a48'>\\2</span>\\3\\4",
+        $explain
+      );
+      $explain = nl2br($explain);
+
+      $boosts_html .= search_api_solr_extra_html_collapsible(
+        t('Solr result record @num/@of [score: @score (@score_prc %)] "@title" boosts', array(
+          '@num' => $index + 1,
+          '@of' => $num_records,
+          '@score' => $results['results'][$id]['score'],
+          '@score_prc' => ceil(100.0 / $max_boost * $results['results'][$id]['score']),
+          '@title' => @$results['results'][$id]['fields']['title']
+        )),
+        $explain,
+        FALSE
+      );
+
+      ++$index;
+    }
+
+    drupal_set_message(
+      search_api_solr_extra_html_collapsible(
+        t('Solr result boosts for "@search_id"', array(
+          '@search_id' => $options['search id'],
+        )),
+        $boosts_html,
+        variable_get('search_api_solr_extra_settings_debugging_result_boosts_expand', FALSE)
+      )
+    );
+  }
+
+  if (variable_get('search_api_solr_extra_settings_debugging_results_enabled', FALSE)
+      && user_access('administer mp')) {
+    $index = 0;
+    $result_html = '';
+
+    foreach ($results['results'] as $id => $record) {
+      if (!empty($explains)) {
+        $explain = '<pre>' . $explains[$index] . '</pre>';
+      }
+      else {
+        $explain = t('No explain available');
+      }
+
+      $result_html .= search_api_solr_extra_html_collapsible(
+        t(
+          'Solr result record @num/@of',
+          array('@num' => $index + 1, '@of' => $num_records)
+        ),
+        search_api_solr_extra_html_collapsible(
+          t('Explain'), $explain) . '<pre>'
+          . check_plain(print_r($record, TRUE))
+          . '</pre>'
+      );
+
+      ++$index;
+    }
+
+    // Displaying Solr result processing time.
+    $time_html = t('Processing time: @timems', array('@time' => $response->debug->timing->time));
+
+    drupal_set_message(
+      search_api_solr_extra_html_collapsible(
+        t('Solr query result (@num results) @processing_time for "@search_id"', array(
+          '@num' => $num_records,
+          '@processing_time' => t('(@timems)', array('@time' => $response->debug->timing->time)),
+          '@search_id' => $options['search id'],
+        )),
+        $time_html . '<hr />' . $result_html
+      )
+    );
+  }
+}
+
+/**
+ * Implements hook_search_api_solr_query_alter().
+ */
+function search_api_solr_extra_search_api_solr_query_alter(&$call_args, SearchApiQueryInterface $query) {
+
+  $options = &$query->getOptions();
+
+  if (variable_get('search_api_solr_extra_solr_cache_results', TRUE)) {
+    // Solr caching enabled.
+    if (($position = array_search('tm_title:"order by random"', $call_args['params']['fq'])) === FALSE) {
+      // Query isn't based on the "order by random", we may use cache on it.
+      $options['query_hash'] = 'search_api_solr_extra:' . md5(
+        count($call_args['params']) .
+        $call_args['query'] .
+        (isset($call_args['limit']) ? $call_args['limit'] : '') .
+        implode(',', $call_args['params']['fq'])
+      );
+
+      if (($cached = cache_get($options['query_hash'])) && !empty($cached->data) && $cached->expire > REQUEST_TIME)  {
+        // We already have cached version of the query result. Cancelling query.
+        $call_args['params'] = array();
+        $call_args['query']  = '*:*';
+        $call_args['limit']  = 0;
+        return;
+      }
+    }
+  }
+
+  if ($call_args['query'] == '"__REBUILD_SPELLCHECK_DATA__"') {
+    // Rebuilding spellchecker data.
+    $call_args['params'] = array(
+      'spellcheck' => 'true',
+      'spellcheck.build' => 'true',
+    );
+    $call_args['query'] = '*:*';
+    $call_args['limit'] = 0;
+    return;
+  }
+
+  $call_args['params']['mm'] = '100%';
+
+  if (variable_get('search_api_solr_extra_settings_debugging_queries_enabled', FALSE)) {
+    $query_debug_html = search_api_solr_extra_html_collapsible(
+      t('Original values'),
+      '<pre>' . check_plain(print_r($call_args, TRUE)) . '</pre>'
+    );
+  }
+
+  if (user_access('administer search_api_solr_extra') && (
+    variable_get('search_api_solr_extra_settings_debugging_result_boosts_enabled', FALSE) ||
+    variable_get('search_api_solr_extra_settings_debugging_results_enabled', FALSE)) ||
+    variable_get('search_api_solr_extra_settings_debugging_result_spellcheck_enabled', FALSE) ||
+    variable_get('search_api_solr_extra_settings_debugging_result_full_response_enabled', FALSE) ||
+    variable_get('search_api_solr_extra_settings_debugging_results_process_time', FALSE)) {
+    // Enabling Solr debug.
+
+    // Solr 4.
+    $call_args['params']['debug']      = 'true';
+
+    // Solr 3.x.
+    $call_args['params']['debugQuery'] = 'on';
+  }
+
+  // MP-193: Date-boosting.
+  // @See: http://www.metaltoad.com/blog/date-boosting-solr-drupal-search-results.
+
+  $search_api_solr_extra_boost_expr_date = variable_get(
+    'search_api_solr_extra_boost_expr_date',
+    'recip(abs(ms(NOW/HOUR,ds_changed)),3.16e-11,1,.1)'
+  );
+  $call_args['params']['bf'][] = $search_api_solr_extra_boost_expr_date;
+
+  $matches = array();
+  // Checking for a date in format M/D/Y in the query and splitting it by spaces.
+  if (preg_match_all('/"*\s*(\d{1,2})\s+(\d{1,2})\s+(\d{4,4})\s*"*/',
+    $call_args['query'], $matches)) {
+    $call_args['query'] = str_replace($matches[0], '', $call_args['query']);
+    $call_args['query'] .= '"' . $matches[3][0] . '" "' . $matches[1][0]
+      . '" "' . $matches[2][0] . '"';
+  }
+
+  // Checking for a date in format Y-M-D in the query and splitting it by spaces.
+  elseif (preg_match_all('/"*\s*(\d{4,4})\s+(\d{1,2})\s+(\d{1,2})\s*"*/',
+    $call_args['query'], $matches)) {
+    $call_args['query'] = str_replace($matches[0], '', $call_args['query']);
+    $call_args['query'] .= '"' . $matches[1][0] . '" "' . $matches[2][0]
+      . '" "' . $matches[3][0] . '"';
+  }
+
+  // Get module id of our solr query.
+  $search_id_segments = explode(':', $options['search id']);
+  $mid = reset($search_id_segments);
+  if ($mid == 'search_api_ranges') {
+    // We're removing range solr query to improve our performance.
+    $call_args['query'] = NULL;
+    $call_args['params'] = NULL;
+    return;
+  }
+
+  // Existence of facet.prefix parameter indicates that this is an autocomplete query.
+  $is_autocomplete = isset($call_args['params']['facet.prefix']);
+
+  if ($is_autocomplete) {
+    // Autocomplete search. We'd like to search in title field only.
+    $call_args['params']['facet.field'] = array(
+      'tm_title'
+    );
+    // No query is needed while performing autocomplete faceting.
+    $call_args['query'] = '';
+  }
+
+  // Tokenizing keywords.
+  $original_keywords = $call_args['query'];
+
+  $tokenizer_expression = '/([' . PREG_CLASS_UNICODE_WORD_BOUNDARY . ']+)/u';
+
+  $value = &$call_args['query'];
+
+  // Removing quotation marks.
+  $value = trim(preg_replace('/"([^"]*)"/', '\1', $value));
+
+  // Removing parentheses and boosts.
+  $value = trim(preg_replace('/\(|\)|\^\d+\.\d+/', '', $value));
+
+  // Tokenizing.
+  $values = array_map('trim', preg_split($tokenizer_expression, $value));
+
+  if (variable_get('search_api_solr_extra_settings_debugging_build_spellcheck_enabled',
+    FALSE)) {
+    $call_args['params']['spellcheck.build'] = 'true';
+  }
+
+  if (!empty($call_args['query'])) {
+
+    // Gathering boost settings
+    $mp_jobs_search_boost_value_keywords_any_s = variable_get(
+      'mp_jobs_search_boost_value_keywords_any_s', 1.0
+    );
+    $mp_jobs_search_boost_value_keywords_any_fm = variable_get(
+      'mp_jobs_search_boost_value_keywords_any_fm', 1.0
+    );
+    $mp_jobs_search_boost_value_keywords_t_s_nf = variable_get(
+      'mp_jobs_search_boost_value_keywords_t_s_nf', 1.0
+    );
+    $mp_jobs_search_boost_value_keywords_t_fm_nf = variable_get(
+      'mp_jobs_search_boost_value_keywords_t_fm_nf', 1.0
+    );
+
+    // Adding full or partial match strings.
+    $value = '(' .
+      // Keywords in any field (All words match).
+      '"' . implode(' ', $values) . '"^'
+      . $mp_jobs_search_boost_value_keywords_any_fm . ' OR '
+
+      // Keywords in title field (All words match) in featured or not featured advert.
+      . '(tm_title:"' . implode(' ', $values) . '"^'
+      . $mp_jobs_search_boost_value_keywords_t_fm_nf . ') OR '
+
+      // Keywords in any field (Single word).
+      . '("' . implode('"^' . $mp_jobs_search_boost_value_keywords_any_s
+      . ' AND "', $values) . '"^' . $mp_jobs_search_boost_value_keywords_any_s
+      . ')' .
+
+    ')';
+  }
+
+  unset($value);
+
+  $options = $query->getOptions();
+
+  // Note: random sorting needs to be supported by solr server.
+  // See: http://lucene.apache.org/solr/4_1_0/solr-core/org/apache/solr/schema/RandomSortField.html.
+  // Acquia supports that for Search API Solr RC3 (not in RC2).
+  // Search API Solr syntax: rc2 - t_title, rc3 - tm_title.
+  if (($position = array_search('tm_title:"order by random"', $call_args['params']['fq'])) !== FALSE) {
+    unset($call_args['params']['fq'][$position]);
+    // Adding order by random.
+    $seed = rand(1, 500);
+    $call_args['params']['sort'] = 'random_' . $seed . ' asc';
+  }
+
+  if (variable_get('search_api_solr_extra_score_thresholding_threshold_enabled', FALSE)) {
+    if (!empty($call_args['query'])) {
+      $threshold = variable_get('search_api_solr_extra_score_thresholding_threshold_value');
+
+      // "qxf" will contain regular query(if any) + filters - facet tags.
+      $call_args['params']['qxf'] = '(' . $call_args['query'] . ')';
+
+      if (!empty($call_args['query'])) {
+        // Separating query and filters with AND operator.
+        $call_args['params']['qxf'] .= ' AND (';
+      }
+
+      // Filter parameters.
+      $qxf_params = array();
+
+      foreach ($call_args['params']['fq'] as $item) {
+        if (substr($item, 0, 6) == '{!tag=') {
+          // It's a facet tag, skipping this parameter.
+          continue;
+        }
+        $qxf_params[] = $item;
+      }
+
+      // Joining filters.
+      $call_args['params']['qxf'] .= '(+( ' . implode(' ) AND +( ', $qxf_params) . ' )))';
+
+      // Normalized score (0-100)
+      $call_args['params']['fq'][] = '{!frange mm=100% l=' . (float)$threshold . '}product(scale(product(query({!type=edismax v=$qxf}),1),0,1),100)';
+
+      // Old normalized score method (0-100)
+      // $call_args['params']['ns'][] = '{!func}product(scale(product(query({!type=edismax v=$q}),1),0,1),100)';
+      // $call_args['params']['fq'][] = '{!frange l=' . (float)$threshold . '}$ns';
+    }
+  }
+
+  if (variable_get('search_api_solr_extra_settings_debugging_queries_enabled', FALSE)
+      && user_access('administer mp')) {
+    $query_debug_html .= search_api_solr_extra_html_collapsible(
+      t('Modified values'),
+      '<pre>' . check_plain(print_r($call_args, TRUE)) . '</pre>'
+    );
+
+    drupal_set_message(
+      search_api_solr_extra_html_collapsible(
+        t('Solr query: @keywords for "@search_id"', array(
+          '@keywords' => $original_keywords,
+          '@search_id' => $options['search id'],
+        )),
+        $query_debug_html
+      )
+    );
+  }
+
+  if (variable_get('search_api_solr_extra_settings_logging_queries_enabled', FALSE)
+       && user_access('administer mp')) {
+    // Logging Solr query to the watchdog.
+    // URL for local server query may be also handy.
+    watchdog(
+      'Solr', t('Sent query (@keywords) for "@search_id"') . ': <br />' .
+      '!url<br />' .
+      '<pre>' . print_r($call_args, TRUE) . '</pre>',
+      array(
+        '@keywords' => $original_keywords,
+        '@search_id' => $options['search id'],
+        '!url' => l('Test query on local server', '/solr/select?' .
+          preg_replace('/%5B[0-9]+%5D/simU', '', http_build_query(
+            array_merge(
+              array('q' => $call_args['query']),
+              array('rows' => $call_args['limit']),
+              $call_args['params']
+            )
+          )
+        ))
+      ),
+      WATCHDOG_INFO
+    );
+  }
+}
+
+/**
+ * Returns Solr results cache timeout set on the module settings page.
+ *
+ * @return integer
+ *   Timeout in seconds.
+ */
+function search_api_solr_extra_get_solr_cache_results_timeout() {
+  if (!variable_get('search_api_solr_extra_solr_cache_results', TRUE)) {
+    // Caching disabled.
+    return 0;
+  }
+
+  // Caching enabled.
+  $timeout_string = variable_get('search_api_solr_extra_solr_cache_results_timeout', '1min 30s');
+
+  preg_match('/\d+\s*week/', $timeout_string, $matches_week);
+  preg_match('/\d+\s*day/',  $timeout_string, $matches_day);
+  preg_match('/\d+\s*h/',    $timeout_string, $matches_hour);
+  preg_match('/\d+\s*min/',  $timeout_string, $matches_min);
+  preg_match('/\d+\s*s/',    $timeout_string, $matches_sec);
+
+  return
+    $matches_week[0] * 604800 +
+    $matches_day[0]  * 86400 +
+    $matches_hour[0] * 3600 +
+    $matches_min[0]  * 60 +
+    $matches_sec[0];
+}
+
+/**
+ * Implements hook_search_api_index_items_alter().
+ * @param array $items
+ * @param SearchApiIndex $index
+ */
+function search_api_solr_extra_search_api_index_items_alter(array &$items, SearchApiIndex $index) {
+  foreach ($items as &$item) {
+    // @TODO: Move it to settings page.
+    if ($item->type == 'ads_adverts') {
+
+      // Removing commas, quotes, html from the index (everything that is not an alphanumeric character).
+      foreach ($item as $key => &$value) {
+        if (substr($key, 0, 6) == 'field_') {
+          if (!empty($value)) {
+            foreach ($value[LANGUAGE_NONE] as &$sub_item) {
+              if (isset($sub_item['value'])) {
+
+                // Removing HTML tags.
+                $sub_item['value'] = strip_tags($sub_item['value']);
+
+                // Removing non-alphanumeric characters.
+                $sub_item['value'] = preg_replace('/[\\/,\.\+\-!=|\* ]+/u', ' ', $sub_item['value']);
+
+                $sub_item['safe_value'] = $sub_item['value'];
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Generates collapsible frame with custom HTML inside.
+ *
+ * @param string $title
+ * @param string $html
+ * @param boolean $opened
+ */
+function search_api_solr_extra_html_collapsible($title, $html, $opened = FALSE) {
+  drupal_add_css(drupal_get_path('module', 'search_api_solr_extra') . '/sass/search_api_solr_extra-debug.scss');
+  drupal_add_js(drupal_get_path('module', 'search_api_solr_extra') . '/js/search_api_solr_extra-debug.js');
+
+  $code = '<div class="search-api-solr-extra-debug' . ($opened ? ' expanded' : '') . '">';
+  $code .= '<div class="search-api-solr-extra-debug-title">' . $title . '</div>';
+  $code .= '<div class="search-api-solr-extra-debug-content">' . $html . '</div>';
+  $code .= '</div>';
+
+  return $code;
+}
+
