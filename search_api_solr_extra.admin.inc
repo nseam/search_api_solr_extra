@@ -35,9 +35,16 @@ function search_api_solr_extra_settings_form() {
     '#title' => t('User Interface'),
   );
 
-  $form['search_api_solr_extra_settings_ui']['static_minmax'] = array(
+  $form['search_api_solr_extra_settings_ui']['search_api_ranges'] = array(
     '#type' => 'fieldset',
-    '#title' => t('Salary slider'),
+    '#title' => t('Search API Ranges slider'),
+  );
+
+  $form['search_api_solr_extra_settings_ui']['search_api_ranges']['search_api_solr_extra_settings_search_api_ranges_filter_out'] = array(
+    '#type' => 'checkbox',
+    '#title' => t("Don't filter range by itself"),
+    '#description' => t('Prevents bug noted there: !url', array('!url' => l(t('Remember min/max values after apply facet'), 'https://drupal.org/comment/8490901#comment-8490901'))),
+    '#default_value' => variable_get('search_api_solr_extra_settings_search_api_ranges_filter_out', TRUE),
   );
 
    $form['search_api_solr_extra_settings_score_thresholding'] = array(

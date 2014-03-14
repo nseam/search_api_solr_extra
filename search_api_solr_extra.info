@@ -2,6 +2,7 @@ name = Solr search extra
 description = Additional functionality for Search API Solr module.
 core = 7.x
 package = Search
+php = 5.2.4
 version = 7.x-1.0
 project = search_api_solr_extra
 dependencies[] = sassy

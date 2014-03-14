@@ -46,22 +46,6 @@ function search_api_solr_extra_menu() {
 }
 
 /**
- * Implements hook_search_api_ranges_minmax_alter().
- *
- * Note: This hook_alter is available after applying patch at: http://drupal.org/node/1765066
- */
-function search_api_solr_extra_search_api_ranges_minmax_alter(&$variables, &$order) {
-  if ($variables['range_field'] == 'field_job_salary_max' && $order == 'ASC') {
-    // We don't want search_api_ranges module to use field_job_salary_max field but field_job_salary_min instead.
-    $variables['range_field'] = 'field_job_salary_min';
-  }
-  elseif ($variables['range_field'] == 'field_job_salary_min' && $order == 'DESC') {
-    // We don't want search_api_ranges module to use field_job_salary_min field but field_job_salary_max instead.
-    $variables['range_field'] = 'field_job_salary_max';
-  }
-}
-
-/**
  * Implements hook_search_api_solr_search_results_alter().
  */
 function search_api_solr_extra_search_api_solr_search_results_alter(&$results, $query, $response) {
@@ -363,11 +347,15 @@ function search_api_solr_extra_search_api_solr_query_alter(&$call_args, SearchAp
   // Get module id of our solr query.
   $search_id_segments = explode(':', $options['search id']);
   $mid = reset($search_id_segments);
-  if ($mid == 'search_api_ranges') {
-    // We're removing range solr query to improve our performance.
-    $call_args['query'] = NULL;
-    $call_args['params'] = NULL;
-    return;
+  if (variable_get('search_api_solr_extra_settings_search_api_ranges_filter_out', TRUE) && $mid == 'search_api_ranges') {
+    $ranges_options = $query->getOption('search_api_ranges');
+    $range_field    = $ranges_options['range_field'];
+    // We're don't want search_api_ranges to filter ranges by itself.
+    foreach ($call_args['params']['fq'] as $index => $value) {
+      if (strpos($value, $range_field) !== FALSE && substr($value, -8) !== '[* TO *]') {
+        unset ($call_args['params']['fq'][$index]);
+      }
+    }
   }
 
   // Existence of facet.prefix parameter indicates that this is an autocomplete query.
